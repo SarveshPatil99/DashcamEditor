@@ -1,0 +1,1165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Dashcam Editor</title>
+  <style>
+    :root {
+      --bg: #15171c; --panel: #1e2128; --panel2: #262a33; --line: #30343e;
+      --text: #e6e8ec; --muted: #9aa1ad; --accent: #4c8dff; --ok: #3fb27f; --bad: #e5534b; --warn: #d9a441;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; height: 100vh; display: flex; flex-direction: column;
+      font: 13px/1.45 "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--text);
+    }
+    button, select, input { font: inherit; color: inherit; }
+    button {
+      background: var(--panel2); border: 1px solid var(--line); border-radius: 5px;
+      padding: 4px 10px; cursor: pointer;
+    }
+    button:hover:not(:disabled) { border-color: var(--accent); }
+    button:disabled { opacity: .45; cursor: default; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+    button.small { padding: 1px 7px; font-size: 12px; }
+    button.on { border-color: var(--accent); background: #24395f; }
+    select, input[type=text], input[type=number] {
+      background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px;
+    }
+    input[type=number] { width: 70px; }
+    header {
+      display: flex; align-items: center; gap: 10px; padding: 7px 14px; border-bottom: 1px solid var(--line);
+    }
+    header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+    .pill { font-size: 12px; padding: 1px 9px; border-radius: 10px; background: var(--panel2); color: var(--muted); }
+    .pill.bad { color: #fff; background: var(--bad); }
+    .spacer { flex: 1; }
+    .muted { color: var(--muted); }
+    .error { color: var(--bad); white-space: pre-wrap; }
+    main { flex: 1; min-height: 0; display: grid; grid-template-columns: 270px minmax(0, 1fr) 370px; }
+
+    /* Folder picker and file list */
+    aside { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+    .folder-bar { display: flex; gap: 6px; padding: 10px 12px 0; }
+    .folder-bar select { flex: 1; min-width: 0; }
+    .folder-path { padding: 3px 12px 6px; color: var(--muted); font-size: 11px; word-break: break-all; border-bottom: 1px solid var(--line); }
+    #fileList { flex: 1; overflow: auto; padding: 4px 0 8px; }
+    .file.folder .icon { width: 13px; text-align: center; color: var(--warn); }
+    .file.copying { cursor: default; opacity: .5; }
+    .file.copying:hover { background: none; }
+    .file.copying .size { color: var(--warn); }
+    .group-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 12px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+    }
+    .file {
+      display: flex; align-items: center; gap: 8px; padding: 5px 12px; cursor: pointer;
+      border-left: 3px solid transparent;
+    }
+    .file:hover { background: var(--panel); }
+    .file.selected { background: var(--panel2); border-left-color: var(--accent); }
+    .file .name { flex: 1; min-width: 0; font-size: 12px; word-break: break-all; }
+    .file .size { color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .empty { padding: 4px 12px; color: var(--muted); font-style: italic; }
+
+    /* Player */
+    .center { display: flex; flex-direction: column; gap: 8px; padding: 10px; min-width: 0; }
+    .stage { position: relative; flex: 1; min-height: 200px; background: #000; border-radius: 6px; overflow: hidden; }
+    video { position: absolute; inset: 0; width: 100%; height: 100%; }
+    video:not([src]) { display: none; }
+    .placeholder {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted);
+    }
+    #overlay { position: absolute; overflow: hidden; pointer-events: none; display: none; }
+    #overlay.drawing { pointer-events: auto; cursor: crosshair; background: rgba(76, 141, 255, .08); }
+    #cropBox {
+      position: absolute; border: 2px dashed #fff; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .55); display: none;
+      pointer-events: auto; cursor: move; touch-action: none;
+    }
+    #cropBox.moving { border-style: solid; }
+    #overlay.drawing #cropBox { pointer-events: none; }
+    #cropLabel {
+      position: absolute; left: 16px; top: 4px; font-size: 11px; background: rgba(0, 0, 0, .7); padding: 0 5px;
+      border-radius: 3px; pointer-events: none; white-space: nowrap;
+    }
+    /* Resize handles sit inside the box so they are never clipped at the frame edge. */
+    .handle { position: absolute; }
+    .handle[data-dir=n], .handle[data-dir=s] { left: 14px; right: 14px; height: 10px; cursor: ns-resize; }
+    .handle[data-dir=e], .handle[data-dir=w] { top: 14px; bottom: 14px; width: 10px; cursor: ew-resize; }
+    .handle[data-dir=n] { top: 0; }
+    .handle[data-dir=s] { bottom: 0; }
+    .handle[data-dir=w] { left: 0; }
+    .handle[data-dir=e] { right: 0; }
+    .handle[data-dir=n]::after, .handle[data-dir=s]::after,
+    .handle[data-dir=e]::after, .handle[data-dir=w]::after {
+      content: ''; position: absolute; background: #fff; border-radius: 2px; box-shadow: 0 0 2px #000;
+    }
+    .handle[data-dir=n]::after, .handle[data-dir=s]::after { left: calc(50% - 12px); width: 24px; height: 4px; top: 3px; }
+    .handle[data-dir=e]::after, .handle[data-dir=w]::after { top: calc(50% - 12px); height: 24px; width: 4px; left: 3px; }
+    .handle.corner { width: 12px; height: 12px; background: #fff; border: 1px solid #000; }
+    .handle[data-dir=nw] { left: 0; top: 0; cursor: nwse-resize; }
+    .handle[data-dir=ne] { right: 0; top: 0; cursor: nesw-resize; }
+    .handle[data-dir=sw] { left: 0; bottom: 0; cursor: nesw-resize; }
+    .handle[data-dir=se] { right: 0; bottom: 0; cursor: nwse-resize; }
+    .meta { color: var(--muted); font-size: 12px; min-height: 18px; }
+    .timeline { position: relative; height: 18px; background: var(--panel); border-radius: 4px; cursor: pointer; }
+    #trimRegion { position: absolute; top: 0; bottom: 0; background: rgba(76, 141, 255, .35); border-left: 2px solid var(--accent); border-right: 2px solid var(--accent); }
+    #playhead { position: absolute; top: -2px; bottom: -2px; width: 2px; background: #fff; }
+    .controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .time { font-variant-numeric: tabular-nums; min-width: 120px; }
+    kbd { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+
+    /* Side panel */
+    .side { border-left: 1px solid var(--line); overflow: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 10px 12px; }
+    .card h2 { font-size: 13px; margin: 0 0 8px; display: flex; align-items: center; gap: 6px; }
+    .card h2 .sub { font-weight: 400; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row { display: flex; align-items: center; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
+    .row > label:first-child { width: 62px; color: var(--muted); }
+    .plan { margin-top: 8px; padding: 8px; background: var(--bg); border-radius: 5px; font-size: 12px; }
+    .plan summary { cursor: pointer; color: var(--muted); margin-top: 4px; }
+    .plan pre {
+      margin: 6px 0 0; white-space: pre-wrap; word-break: break-all; font: 11px/1.4 Consolas, monospace; color: #b8c4d6;
+    }
+    .actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+    .stitch-item { display: flex; align-items: center; gap: 4px; padding: 2px 0; }
+    .stitch-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .job { padding: 7px 0; border-top: 1px solid var(--line); }
+    .job:first-of-type { border-top: 0; }
+    .job .title { display: flex; gap: 6px; align-items: center; }
+    .job .title .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bar { height: 5px; background: var(--bg); border-radius: 3px; margin: 5px 0 3px; overflow: hidden; }
+    .bar > div { height: 100%; background: var(--accent); transition: width .4s; }
+    .job.done .bar > div { background: var(--ok); }
+    .job.failed .bar > div, .job.cancelled .bar > div { background: var(--bad); }
+    #banner {
+      display: none; padding: 8px 14px; background: var(--bad); color: #fff;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Dashcam Editor</h1>
+    <span class="pill" id="ffmpegPill">ffmpeg ...</span>
+    <span class="pill" id="gpuPill"></span>
+    <span class="spacer"></span>
+    <button id="quitBtn" title="Stop the server">Quit</button>
+  </header>
+  <div id="banner"></div>
+
+  <main>
+    <aside>
+      <div class="folder-bar">
+        <select id="folderSel" title="Folder with the clips"></select>
+        <button id="browseBtn" title="Pick a folder with the Windows folder dialog">Browse...</button>
+      </div>
+      <div class="folder-path" id="folderPath"></div>
+      <div id="fileList"></div>
+    </aside>
+
+    <section class="center">
+      <div class="stage" id="stage">
+        <div class="placeholder" id="placeholder">Select a clip on the left</div>
+        <video id="video" controls preload="metadata"></video>
+        <div id="overlay">
+          <div id="cropBox">
+            <span id="cropLabel"></span>
+            <div class="handle" data-dir="n"></div>
+            <div class="handle" data-dir="s"></div>
+            <div class="handle" data-dir="e"></div>
+            <div class="handle" data-dir="w"></div>
+            <div class="handle corner" data-dir="nw"></div>
+            <div class="handle corner" data-dir="ne"></div>
+            <div class="handle corner" data-dir="sw"></div>
+            <div class="handle corner" data-dir="se"></div>
+          </div>
+        </div>
+      </div>
+      <div class="meta" id="meta"></div>
+      <div class="timeline" id="timeline" title="Click to seek. Blue = the part that will be exported.">
+        <div id="trimRegion"></div>
+        <div id="playhead"></div>
+      </div>
+      <div class="controls">
+        <span class="time" id="timeText">0:00.00 / 0:00.00</span>
+        <button id="setStartBtn">Set start <kbd>I</kbd></button>
+        <button id="setEndBtn">Set end <kbd>O</kbd></button>
+        <button id="playSelBtn">Play selection <kbd>P</kbd></button>
+        <button id="clearTrimBtn">Clear trim</button>
+        <span class="spacer"></span>
+        <button id="stepBackBtn" title="Back 1 frame (hold to repeat)">&#9664;| <kbd>,</kbd></button>
+        <button id="stepFwdBtn" title="Forward 1 frame (hold to repeat)">|&#9654; <kbd>.</kbd></button>
+      </div>
+    </section>
+
+    <section class="side">
+      <div class="card" id="editCard">
+        <h2>Edit <span class="sub" id="editName">no clip selected</span></h2>
+        <div class="row">
+          <label>Trim</label>
+          <input type="text" id="startInput" placeholder="start" size="7" title="Seconds or m:ss">
+          <span class="muted">to</span>
+          <input type="text" id="endInput" placeholder="end" size="7" title="Seconds or m:ss">
+        </div>
+        <div class="row">
+          <label>Audio</label>
+          <label><input type="checkbox" id="muteChk"> Remove audio</label>
+        </div>
+        <div class="row">
+          <label>Crop</label>
+          <button id="drawCropBtn" class="small">Draw box</button>
+          <select id="aspectSel" title="Lock the crop shape">
+            <option value="">Free shape</option>
+            <option value="1.7778">16:9</option>
+            <option value="1.3333">4:3</option>
+            <option value="1">1:1 square</option>
+            <option value="0.5625">9:16 vertical</option>
+          </select>
+          <button id="clearCropBtn" class="small">Clear</button>
+        </div>
+        <div id="cropFields" style="display:none">
+          <div class="row">
+            <label></label>
+            <span class="muted">x</span> <input type="number" id="cropX" min="0">
+            <span class="muted">y</span> <input type="number" id="cropY" min="0">
+          </div>
+          <div class="row">
+            <label></label>
+            <span class="muted">w</span> <input type="number" id="cropW" min="16">
+            <span class="muted">h</span> <input type="number" id="cropH" min="16">
+          </div>
+        </div>
+        <div class="row">
+          <label>Size</label>
+          <select id="heightSel">
+            <option value="0">Original</option>
+            <option value="1080">1080p</option>
+            <option value="720">720p</option>
+            <option value="480">480p</option>
+          </select>
+          <label class="muted" style="width:auto">Speed</label>
+          <select id="speedSel">
+            <option value="1">1x</option>
+            <option value="2">2x</option>
+            <option value="4">4x</option>
+            <option value="8">8x</option>
+            <option value="16">16x</option>
+            <option value="32">32x</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>Encoder</label>
+          <select id="encoderSel"></select>
+        </div>
+        <div class="row">
+          <label></label>
+          <label title="Re-encodes so the cut lands on the exact frame instead of the nearest keyframe">
+            <input type="checkbox" id="preciseChk"> Frame-accurate trim (slower)
+          </label>
+        </div>
+        <div class="plan" id="editPlan"><span class="muted">Select a clip to start.</span></div>
+        <div class="actions"><button class="primary" id="exportBtn" disabled>Export</button></div>
+      </div>
+
+      <div class="card" id="stitchCard">
+        <h2>Stitch <span class="sub">join clips end to end</span></h2>
+        <div id="stitchList"><span class="muted">Tick two or more clips in the list on the left.</span></div>
+        <div class="row" id="stitchOptions" style="display:none">
+          <span><label><input type="checkbox" id="stitchMuteChk"> Remove audio</label></span>
+          <span class="spacer"></span>
+          <button class="small" id="stitchClearBtn">Untick all</button>
+        </div>
+        <div class="plan" id="stitchPlan" style="display:none"></div>
+        <div class="actions"><button class="primary" id="stitchBtn" disabled>Stitch</button></div>
+      </div>
+
+      <div class="card">
+        <h2>Jobs</h2>
+        <div id="jobList"><span class="muted">Nothing exported yet.</span></div>
+      </div>
+    </section>
+  </main>
+
+<script>
+'use strict';
+
+const token = new URLSearchParams(location.search).get('t');
+const $ = (id) => document.getElementById(id);
+const video = $('video');
+
+const state = {
+  server: null,          // last /api/state: folders, recent, cards, ffmpeg info
+  mediaDir: null,
+  stamp: null,           // fingerprint of the folders; the job poll reloads the list when it changes
+  browsing: false,       // the Windows folder dialog is open
+  files: [],
+  current: null,         // { folder, name }
+  info: null,            // from /api/info
+  trim: { start: null, end: null },
+  crop: null,            // { x, y, w, h } in source pixels
+  drawing: false,
+  stitch: [],            // [{ folder, name }] in join order
+  jobs: [],
+  stopAt: null,          // for "play selection"
+  serverDown: false,
+};
+
+// ---------------------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------------------
+
+async function api(method, path, body) {
+  const headers = { 'X-Token': token };
+  if (body) headers['Content-Type'] = 'application/json';
+  let res;
+  try {
+    res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  } catch (err) {
+    serverDown();
+    throw new Error('The server is not running.');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+function el(tag, props = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+    else if (key === 'className') node.className = value;
+    else node.setAttribute(key, value);
+  }
+  for (const child of children) {
+    if (child != null) node.append(child);
+  }
+  return node;
+}
+
+function fmtTime(seconds) {
+  if (seconds == null || !isFinite(seconds)) return '';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = (seconds % 60).toFixed(2).padStart(5, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
+}
+
+function parseTime(text) {
+  text = text.trim();
+  if (!text) return null;
+  const parts = text.split(':').map(Number);
+  if (parts.length > 3 || parts.some((p) => !isFinite(p) || p < 0)) return NaN;
+  return parts.reduce((total, part) => total * 60 + part, 0);
+}
+
+function fmtSize(bytes) {
+  if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + ' GB';
+  if (bytes >= 1e6) return Math.round(bytes / 1e6) + ' MB';
+  return Math.round(bytes / 1e3) + ' KB';
+}
+
+const sameFile = (a, b) => a && b && a.folder === b.folder && a.name === b.name;
+const videoUrl = (f) => `/video/${f.folder}/${encodeURIComponent(f.name)}?t=${token}`;
+
+function serverDown() {
+  if (state.serverDown) return;
+  state.serverDown = true;
+  $('banner').textContent = 'The server has stopped. Close this window and start the app again.';
+  $('banner').style.display = 'block';
+}
+
+// ---------------------------------------------------------------------------------------
+// File list
+// ---------------------------------------------------------------------------------------
+
+// One reload at a time; callers that arrive meanwhile share the one in flight.
+let refreshing = null;
+
+function refreshFiles() {
+  if (!refreshing) {
+    refreshing = api('GET', '/api/state').then(applyState).finally(() => { refreshing = null; });
+  }
+  return refreshing;
+}
+
+function applyState(s) {
+  const folderChanged = state.mediaDir != null && s.mediaDir !== state.mediaDir;
+  state.server = s;
+  state.mediaDir = s.mediaDir;
+  state.stamp = s.stamp;
+  state.files = s.files;
+  $('ffmpegPill').textContent = s.ffmpeg ? `ffmpeg ${s.ffmpegVersion.split('-')[0]}` : 'ffmpeg not found';
+  $('ffmpegPill').className = s.ffmpeg ? 'pill' : 'pill bad';
+  $('gpuPill').textContent = s.gpuLabel ? `GPU: ${s.gpuLabel}` : 'CPU encoding';
+
+  const encoder = $('encoderSel');
+  if (!encoder.options.length) {
+    if (s.gpuLabel) encoder.append(el('option', { value: 'auto' }, `GPU (${s.gpuLabel})`));
+    encoder.append(el('option', { value: 'cpu' }, 'CPU (libx264)'));
+  }
+
+  // Clips are named relative to the clips folder, so a folder switch drops the old ones.
+  const usable = (item) => !(folderChanged && item.folder === 'media') &&
+    state.files.some((f) => sameFile(f, item) && !f.copying);
+  if (state.current && !usable(state.current)) {
+    clearCurrent(folderChanged ? null : `${state.current.name} is no longer there.`);
+  }
+  state.stitch = state.stitch.filter(usable);
+  renderFolders();
+  renderFiles();
+  renderStitch();
+}
+
+// Shorten long paths for the menu, keeping the drive and the last two folders.
+function shortPath(path) {
+  const parts = path.split('\\').filter(Boolean);
+  if (path.length <= 34 || parts.length <= 3) return path;
+  const root = path.startsWith('\\\\') ? `\\\\${parts[0]}` : parts[0];
+  return `${root}\\...\\${parts.slice(-2).join('\\')}`;
+}
+
+const samePath = (a, b) => a.replace(/\\$/, '').toLowerCase() === b.replace(/\\$/, '').toLowerCase();
+
+function renderFolders() {
+  const s = state.server;
+  const sel = $('folderSel');
+  const option = (value, label) => el('option', { value, title: value }, label);
+  const groups = [option(s.mediaDir, shortPath(s.mediaDir))];
+  const cards = s.cards.filter((c) => !samePath(c.path, s.mediaDir));
+  if (cards.length) groups.push(el('optgroup', { label: 'SD cards and USB drives' }, ...cards.map((c) => option(c.path, c.label))));
+  const recent = s.recent.filter((p) => !samePath(p, s.mediaDir));
+  if (recent.length) groups.push(el('optgroup', { label: 'Recent' }, ...recent.map((p) => option(p, shortPath(p)))));
+  groups.push(el('optgroup', { label: 'Other' }, el('option', { value: '?type' }, 'Type a path...')));
+  sel.replaceChildren(...groups);
+  sel.value = s.mediaDir;
+  $('folderPath').textContent = s.mediaDir;
+  $('folderPath').title = `Clips: ${s.mediaDir}\nExports go to: ${s.outputDir}`;
+}
+
+function setFolder(path) {
+  return api('POST', '/api/folder', { path }).then(applyState).catch((err) => {
+    showError(err);
+    renderFolders();  // put the menu back on the current folder
+  });
+}
+
+function onFolderSelect() {
+  const value = $('folderSel').value;
+  if (value !== '?type') {
+    setFolder(value);
+    return;
+  }
+  renderFolders();
+  const typed = prompt('Folder with the clips, for example E:\\DCIM\\Movie', state.mediaDir || '');
+  if (typed && typed.trim()) setFolder(typed.trim());
+}
+
+async function browseFolder() {
+  try {
+    await api('POST', '/api/browse');
+    state.browsing = true;
+    renderBrowsing();
+    pollJobs();  // polls quickly while the dialog is open, then picks up the new folder
+  } catch (err) {
+    showError(err);
+  }
+}
+
+function renderBrowsing() {
+  $('browseBtn').disabled = state.browsing;
+  $('browseBtn').textContent = state.browsing ? 'Choosing...' : 'Browse...';
+}
+
+function folderRow(icon, name, path, title) {
+  return el('div', { className: 'file folder', title: title || path, onclick: () => setFolder(path) },
+    el('span', { className: 'icon' }, icon), el('span', { className: 'name' }, name));
+}
+
+function renderFiles() {
+  const s = state.server;
+  const list = $('fileList');
+  list.replaceChildren();
+  for (const [folder, title] of [['media', 'Clips'], ['output', 'Exports']]) {
+    const files = state.files.filter((f) => f.folder === folder);
+    const head = el('div', { className: 'group-head' }, el('span', {}, `${title} (${files.length})`));
+    if (folder === 'media' && files.filter((f) => !f.copying).length > 1) {
+      head.append(el('button', { className: 'small', title: 'Tick all clips for stitching', onclick: tickAll }, 'Tick all'));
+    }
+    if (folder === 'output') {
+      head.title = s.outputDir;
+      head.append(el('button', {
+        className: 'small', title: `Open ${s.outputDir}`,
+        onclick: () => api('POST', '/api/open-output').catch(showError),
+      }, 'Open folder'));
+    }
+    list.append(head);
+    if (folder === 'media') {
+      if (s.parent) list.append(folderRow('\u2191', 'Up one folder', s.parent));
+      for (const sub of s.subfolders) list.append(folderRow('\u{1F4C1}', sub.name, sub.path));
+    }
+    if (folder === 'media' && !s.mediaOk) {
+      list.append(el('div', { className: 'empty' }, 'Folder not available. If it is on an SD card, plug the card back in.'));
+    } else if (!files.length) {
+      list.append(el('div', { className: 'empty' }, folder === 'media' ? 'No videos in this folder' : 'Nothing yet'));
+    }
+    for (const f of files) list.append(fileRow(f));
+  }
+}
+
+function fileRow(f) {
+  const checkbox = el('input', {
+    type: 'checkbox', title: 'Tick to stitch',
+    onclick: (e) => { e.stopPropagation(); toggleStitch(f, e.target.checked); },
+  });
+  checkbox.checked = state.stitch.some((s) => sameFile(s, f));
+  checkbox.disabled = f.copying;
+  const classes = ['file'];
+  if (sameFile(state.current, f)) classes.push('selected');
+  if (f.copying) classes.push('copying');
+  return el('div', {
+    className: classes.join(' '),
+    title: f.copying ? `${f.name}\nStill being copied in. It can be opened when the copy finishes.` : `${f.name}\n${f.modified}`,
+    onclick: () => { if (!f.copying) selectFile(f); },
+  }, checkbox, el('span', { className: 'name' }, f.name), el('span', { className: 'size' }, f.copying ? 'copying...' : fmtSize(f.size)));
+}
+
+// Close the clip in the player, e.g. because it was deleted or the folder changed.
+function clearCurrent(message) {
+  state.current = null;
+  state.info = null;
+  state.trim = { start: null, end: null };
+  state.crop = null;
+  state.stopAt = null;
+  setDrawing(false);
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
+  $('placeholder').textContent = message || 'Select a clip on the left';
+  $('placeholder').style.display = '';
+  $('editName').textContent = 'no clip selected';
+  $('meta').textContent = '';
+  schedulePlan();  // discards any plan still on its way
+  $('editPlan').replaceChildren(el('span', { className: 'muted' }, 'Select a clip to start.'));
+  $('exportBtn').disabled = true;
+  renderTrim();
+  renderCrop();
+  renderTime();
+}
+
+function selectFile(f) {
+  state.current = { folder: f.folder, name: f.name };
+  state.info = null;
+  state.trim = { start: null, end: null };
+  state.crop = null;
+  setDrawing(false);
+  $('placeholder').style.display = 'none';
+  $('editName').textContent = f.name;
+  $('meta').textContent = '';
+  video.src = videoUrl(f);
+  api('GET', `/api/info?folder=${f.folder}&name=${encodeURIComponent(f.name)}`)
+    .then((info) => { state.info = info; renderMeta(); })
+    .catch(() => {});
+  renderFiles();
+  renderTrim();
+  renderCrop();
+  schedulePlan();
+}
+
+function renderMeta() {
+  const i = state.info;
+  if (!i) return;
+  const audio = i.audioCodec ? ` + ${i.audioCodec}` : ', no audio';
+  $('meta').textContent = `${i.width}x${i.height} · ${i.fps} fps · ${i.videoCodec}${audio} · ${fmtTime(i.duration)} · ${fmtSize(i.size)}`;
+}
+
+// ---------------------------------------------------------------------------------------
+// Trim
+// ---------------------------------------------------------------------------------------
+
+function duration() {
+  return isFinite(video.duration) ? video.duration : (state.info ? state.info.duration : 0);
+}
+
+function renderTrim() {
+  // Show the start time of the marked frame (playback lands mid-frame).
+  const frameStart = (t) => (t == null ? null : frameAt(t) / fps());
+  if (document.activeElement !== $('startInput')) $('startInput').value = fmtTime(frameStart(state.trim.start));
+  if (document.activeElement !== $('endInput')) $('endInput').value = fmtTime(frameStart(state.trim.end));
+  const total = duration();
+  const region = $('trimRegion');
+  if (!total || (state.trim.start == null && state.trim.end == null)) {
+    region.style.display = 'none';
+    return;
+  }
+  const start = state.trim.start ?? 0;
+  const end = state.trim.end ?? total;
+  region.style.display = 'block';
+  region.style.left = `${(start / total) * 100}%`;
+  region.style.width = `${Math.max(0, (end - start) / total) * 100}%`;
+}
+
+function renderTime() {
+  const total = duration();
+  const now = video.currentTime || 0;
+  $('timeText').textContent = `${fmtTime(now)} / ${fmtTime(total || 0)} · frame ${frameAt(now)}`;
+  $('playhead').style.left = total ? `${(video.currentTime / total) * 100}%` : '0';
+}
+
+function setTrim(which, value) {
+  if (!state.current) return;
+  state.trim[which] = value;
+  const { start, end } = state.trim;
+  if (start != null && end != null && end <= start) {
+    // Keep the pair valid by clearing the other end.
+    state.trim[which === 'start' ? 'end' : 'start'] = null;
+  }
+  renderTrim();
+  schedulePlan();
+}
+
+function onTrimInput(which) {
+  const value = parseTime($(which + 'Input').value);
+  if (Number.isNaN(value)) {
+    $(which + 'Input').style.borderColor = 'var(--bad)';
+    return;
+  }
+  $(which + 'Input').style.borderColor = '';
+  setTrim(which, value);
+}
+
+function playSelection() {
+  if (!state.current) return;
+  video.currentTime = state.trim.start ?? 0;
+  state.stopAt = state.trim.end;
+  video.play();
+}
+
+// Frame helpers. Frame n is shown from n/fps until (n+1)/fps.
+function fps() {
+  return (state.info && state.info.fps) || 30;
+}
+
+function lastFrame() {
+  return Math.max(0, Math.ceil(duration() * fps() - 1e-6) - 1);
+}
+
+// The player reports the full duration at the very end, which would count as one frame too
+// many, so clamp to the last real frame.
+function frameAt(seconds) {
+  return Math.min(lastFrame(), Math.floor(seconds * fps() + 1e-6));
+}
+
+// Step one frame, landing mid-frame so the player shows exactly that frame.
+function stepFrame(direction) {
+  if (!video.src) return;
+  video.pause();
+  const frame = Math.max(0, Math.min(lastFrame(), frameAt(video.currentTime) + direction));
+  video.currentTime = (frame + 0.5) / fps();
+}
+
+// ---------------------------------------------------------------------------------------
+// Crop
+// ---------------------------------------------------------------------------------------
+
+// Place the overlay exactly over the picture (the video element letterboxes it).
+function layoutOverlay() {
+  const overlay = $('overlay');
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (!vw || !vh) {
+    overlay.style.display = 'none';
+    return;
+  }
+  const box = $('stage').getBoundingClientRect();
+  const scale = Math.min(box.width / vw, box.height / vh);
+  const width = vw * scale;
+  const height = vh * scale;
+  overlay.style.left = `${(box.width - width) / 2}px`;
+  overlay.style.top = `${(box.height - height) / 2}px`;
+  overlay.style.width = `${width}px`;
+  overlay.style.height = `${height}px`;
+  overlay.style.display = state.crop || state.drawing ? 'block' : 'none';
+}
+
+function clampCrop(crop) {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  let { x, y, w, h } = crop;
+  x = Math.max(0, Math.min(Math.round(x), vw - 16));
+  y = Math.max(0, Math.min(Math.round(y), vh - 16));
+  w = Math.max(16, Math.min(Math.round(w), vw - x));
+  h = Math.max(16, Math.min(Math.round(h), vh - y));
+  return { x, y, w, h };
+}
+
+function renderCrop() {
+  const box = $('cropBox');
+  const crop = state.crop;
+  $('cropFields').style.display = crop ? 'block' : 'none';
+  layoutOverlay();
+  if (!crop || !video.videoWidth) {
+    box.style.display = 'none';
+    return;
+  }
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  box.style.display = 'block';
+  box.style.left = `${(crop.x / vw) * 100}%`;
+  box.style.top = `${(crop.y / vh) * 100}%`;
+  box.style.width = `${(crop.w / vw) * 100}%`;
+  box.style.height = `${(crop.h / vh) * 100}%`;
+  $('cropLabel').textContent = `${crop.w}x${crop.h} · drag to move, edges to resize`;
+  for (const key of ['x', 'y', 'w', 'h']) {
+    const input = $('crop' + key.toUpperCase());
+    if (document.activeElement !== input) input.value = crop[key];
+  }
+}
+
+function setDrawing(on) {
+  state.drawing = on;
+  $('overlay').classList.toggle('drawing', on);
+  $('drawCropBtn').classList.toggle('on', on);
+  $('drawCropBtn').textContent = on ? 'Drag on the video...' : 'Draw box';
+  if (on) video.pause();
+  layoutOverlay();
+}
+
+function aspectRatio() {
+  const value = parseFloat($('aspectSel').value);
+  return value > 0 ? value : null;
+}
+
+// Largest centred box with the given shape.
+function centredCrop(ratio) {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  let w = vw;
+  let h = w / ratio;
+  if (h > vh) {
+    h = vh;
+    w = h * ratio;
+  }
+  return clampCrop({ x: (vw - w) / 2, y: (vh - h) / 2, w, h });
+}
+
+function pointerToVideo(event) {
+  const rect = $('overlay').getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)) * video.videoWidth,
+    y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)) * video.videoHeight,
+  };
+}
+
+let dragFrom = null;
+
+function onCropDown(event) {
+  if (!state.drawing) return;
+  $('overlay').setPointerCapture(event.pointerId);
+  dragFrom = pointerToVideo(event);
+}
+
+function onCropMove(event) {
+  if (!dragFrom) return;
+  const to = pointerToVideo(event);
+  let w = Math.abs(to.x - dragFrom.x);
+  let h = Math.abs(to.y - dragFrom.y);
+  const ratio = aspectRatio();
+  if (ratio) {
+    if (w / ratio > h) h = w / ratio; else w = h * ratio;
+    const maxW = to.x < dragFrom.x ? dragFrom.x : video.videoWidth - dragFrom.x;
+    const maxH = to.y < dragFrom.y ? dragFrom.y : video.videoHeight - dragFrom.y;
+    const fit = Math.min(1, maxW / w, maxH / h);
+    w *= fit;
+    h *= fit;
+  }
+  const x = to.x < dragFrom.x ? dragFrom.x - w : dragFrom.x;
+  const y = to.y < dragFrom.y ? dragFrom.y - h : dragFrom.y;
+  state.crop = { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
+  renderCrop();
+}
+
+function onCropUp() {
+  if (!dragFrom) return;
+  dragFrom = null;
+  if (state.crop && (state.crop.w < 16 || state.crop.h < 16)) state.crop = null;
+  else if (state.crop) state.crop = clampCrop(state.crop);
+  setDrawing(false);
+  renderCrop();
+  schedulePlan();
+}
+
+// Dragging inside an existing box moves it; dragging an edge or corner handle resizes it.
+// The box always stays inside the frame.
+let moveFrom = null;
+const MIN_CROP = 16;
+
+function onBoxDown(event) {
+  if (state.drawing || !state.crop) return;
+  event.preventDefault();
+  $('cropBox').setPointerCapture(event.pointerId);
+  $('cropBox').classList.add('moving');
+  moveFrom = { dir: event.target.dataset.dir || 'move', pointer: pointerToVideo(event), crop: { ...state.crop } };
+}
+
+function onBoxMove(event) {
+  if (!moveFrom) return;
+  const pointer = pointerToVideo(event);
+  const { crop, dir } = moveFrom;
+  if (dir !== 'move') {
+    state.crop = clampCrop(resizeCrop(crop, dir, pointer, aspectRatio()));
+    renderCrop();
+    return;
+  }
+  const x = crop.x + pointer.x - moveFrom.pointer.x;
+  const y = crop.y + pointer.y - moveFrom.pointer.y;
+  state.crop = {
+    ...crop,
+    x: Math.round(Math.max(0, Math.min(video.videoWidth - crop.w, x))),
+    y: Math.round(Math.max(0, Math.min(video.videoHeight - crop.h, y))),
+  };
+  renderCrop();
+}
+
+// New box when handle `dir` (n, s, e, w, ne, nw, se, sw) is dragged to `p` (video pixels).
+// Free shape: only the dragged sides move. Locked shape: a corner keeps the opposite corner
+// fixed; an edge keeps the opposite edge fixed and stays centred on the other axis, sliding
+// along it when needed to stay inside the frame.
+function resizeCrop(c, dir, p, ratio) {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  const left = c.x;
+  const top = c.y;
+  const right = c.x + c.w;
+  const bottom = c.y + c.h;
+  const east = dir.includes('e');
+  const west = dir.includes('w');
+  const north = dir.includes('n');
+  const south = dir.includes('s');
+
+  if (!ratio) {
+    let l = left, t = top, r = right, b = bottom;
+    if (east) r = Math.max(l + MIN_CROP, p.x);
+    if (west) l = Math.min(r - MIN_CROP, p.x);
+    if (north) t = Math.min(b - MIN_CROP, p.y);
+    if (south) b = Math.max(t + MIN_CROP, p.y);
+    return { x: l, y: t, w: r - l, h: b - t };
+  }
+
+  const cx = left + c.w / 2;
+  const cy = top + c.h / 2;
+  const horizontal = east || west;
+  const vertical = north || south;
+  const maxW = east ? vw - left : west ? right : vw;
+  const maxH = south ? vh - top : north ? bottom : vh;
+  const wantW = east ? p.x - left : right - p.x;
+  const wantH = south ? p.y - top : bottom - p.y;
+
+  let w;
+  if (horizontal && vertical) w = Math.max(wantW, wantH * ratio);  // corner: follow the larger pull
+  else if (horizontal) w = wantW;
+  else w = wantH * ratio;
+  w = Math.min(w, maxW, maxH * ratio);
+  w = Math.max(w, MIN_CROP * Math.max(1, ratio));
+  const h = w / ratio;
+  const fit = (value, size, limit) => Math.max(0, Math.min(limit - size, value));
+  return {
+    x: east ? left : west ? right - w : fit(cx - w / 2, w, vw),
+    y: south ? top : north ? bottom - h : fit(cy - h / 2, h, vh),
+    w,
+    h,
+  };
+}
+
+function onBoxUp() {
+  if (!moveFrom) return;
+  moveFrom = null;
+  $('cropBox').classList.remove('moving');
+  schedulePlan();
+}
+
+function onCropField() {
+  if (!state.crop) return;
+  const read = (key) => parseInt($('crop' + key).value, 10);
+  const crop = { x: read('X'), y: read('Y'), w: read('W'), h: read('H') };
+  if (Object.values(crop).some((v) => !Number.isFinite(v))) return;
+  state.crop = clampCrop(crop);
+  renderCrop();
+  schedulePlan();
+}
+
+// ---------------------------------------------------------------------------------------
+// Edit plan and export
+// ---------------------------------------------------------------------------------------
+
+// Send trim points on frame boundaries: the export starts on the start frame and includes
+// the end frame. A quarter-frame margin keeps rounding from losing either frame.
+function editRequest() {
+  const { start, end } = state.trim;
+  return {
+    kind: 'edit',
+    folder: state.current.folder,
+    name: state.current.name,
+    start: start == null ? 0 : Math.max(0, (frameAt(start) - 0.25) / fps()),
+    end: end == null ? 0 : (frameAt(end) + 0.75) / fps(),
+    mute: $('muteChk').checked,
+    crop: state.crop,
+    height: Number($('heightSel').value),
+    speed: Number($('speedSel').value),
+    precise: $('preciseChk').checked,
+    encoder: $('encoderSel').value || 'cpu',
+  };
+}
+
+function renderPlan(target, plan) {
+  const details = el('details', {}, el('summary', {}, 'ffmpeg command'), el('pre', {}, plan.command));
+  if (plan.list) details.append(el('pre', {}, 'list.txt:\n' + plan.list));
+  target.replaceChildren(
+    el('div', {}, plan.summary),
+    el('div', { className: 'muted' }, `Output: ${plan.output} (${fmtTime(plan.duration)})`),
+    details,
+  );
+}
+
+function makePlanner(target, button, buildRequest) {
+  let timer = null;
+  let seq = 0;
+  return function schedule() {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const mine = ++seq;
+      const request = buildRequest();
+      if (!request) return;
+      try {
+        const plan = await api('POST', '/api/plan', request);
+        if (mine !== seq) return;
+        renderPlan(target, plan);
+        button.disabled = false;
+      } catch (err) {
+        if (mine !== seq) return;
+        target.replaceChildren(el('span', { className: 'muted' }, err.message));
+        button.disabled = true;
+      }
+    }, 200);
+  };
+}
+
+const schedulePlan = makePlanner($('editPlan'), $('exportBtn'), () => (state.current ? editRequest() : null));
+const scheduleStitchPlan = makePlanner($('stitchPlan'), $('stitchBtn'), () =>
+  state.stitch.length >= 2 ? { kind: 'stitch', items: state.stitch, mute: $('stitchMuteChk').checked } : null);
+
+async function run(request, button) {
+  button.disabled = true;
+  try {
+    await api('POST', '/api/run', request);
+    pollJobs();
+  } catch (err) {
+    showError(err);
+  } finally {
+    // Re-plan so the next export gets a fresh output name.
+    if (request.kind === 'edit') schedulePlan(); else scheduleStitchPlan();
+  }
+}
+
+function showError(err) {
+  alert(err.message || String(err));
+}
+
+// ---------------------------------------------------------------------------------------
+// Stitch
+// ---------------------------------------------------------------------------------------
+
+function toggleStitch(f, on) {
+  state.stitch = state.stitch.filter((s) => !sameFile(s, f));
+  if (on) state.stitch.push({ folder: f.folder, name: f.name });
+  renderStitch();
+}
+
+function tickAll() {
+  const clips = state.files.filter((f) => f.folder === 'media' && !f.copying);
+  const allTicked = clips.every((f) => state.stitch.some((s) => sameFile(s, f)));
+  state.stitch = allTicked ? [] : clips.map((f) => ({ folder: f.folder, name: f.name }));
+  renderFiles();
+  renderStitch();
+}
+
+function moveStitch(index, delta) {
+  const target = index + delta;
+  if (target < 0 || target >= state.stitch.length) return;
+  const items = [...state.stitch];
+  [items[index], items[target]] = [items[target], items[index]];
+  state.stitch = items;
+  renderStitch();
+}
+
+function renderStitch() {
+  const list = $('stitchList');
+  const count = state.stitch.length;
+  $('stitchOptions').style.display = count ? 'flex' : 'none';
+  $('stitchPlan').style.display = count >= 2 ? 'block' : 'none';
+  $('stitchBtn').textContent = count >= 2 ? `Stitch ${count} clips` : 'Stitch';
+  if (count < 2) $('stitchBtn').disabled = true;
+  if (!count) {
+    list.replaceChildren(el('span', { className: 'muted' }, 'Tick two or more clips in the list on the left.'));
+    return;
+  }
+  list.replaceChildren(...state.stitch.map((item, i) => el('div', { className: 'stitch-item' },
+    el('span', { className: 'muted' }, `${i + 1}.`),
+    el('span', { className: 'name', title: item.name }, item.name),
+    el('button', { className: 'small', title: 'Move up', onclick: () => moveStitch(i, -1) }, '↑'),
+    el('button', { className: 'small', title: 'Move down', onclick: () => moveStitch(i, 1) }, '↓'),
+    el('button', { className: 'small', title: 'Remove', onclick: () => { toggleStitch(item, false); renderFiles(); } }, '×'),
+  )));
+  if (count >= 2) scheduleStitchPlan();
+}
+
+// ---------------------------------------------------------------------------------------
+// Jobs
+// ---------------------------------------------------------------------------------------
+
+let pollTimer = null;
+
+async function pollJobs() {
+  clearTimeout(pollTimer);
+  try {
+    const wasRunning = new Set(state.jobs.filter((j) => j.status === 'running').map((j) => j.id));
+    const { jobs, stamp, browsing } = await api('GET', '/api/jobs');
+    state.jobs = jobs;
+    renderJobs();
+    if (state.browsing !== browsing) {
+      state.browsing = browsing;
+      renderBrowsing();
+    }
+    // Reload the file list when the folders changed (files copied in, deleted, a card
+    // plugged in, a folder picked) or a job finished.
+    const finished = jobs.some((j) => wasRunning.has(j.id) && j.status !== 'running');
+    if (stamp !== state.stamp || finished) refreshFiles().catch(() => {});
+  } catch (err) {
+    // Server gone; serverDown() has shown the banner.
+  }
+  if (state.serverDown) return;
+  const busy = state.browsing || state.jobs.some((j) => j.status === 'running');
+  pollTimer = setTimeout(pollJobs, busy ? 700 : 5000);
+}
+
+function renderJobs() {
+  const list = $('jobList');
+  if (!state.jobs.length) {
+    list.replaceChildren(el('span', { className: 'muted' }, 'Nothing exported yet.'));
+    return;
+  }
+  list.replaceChildren(...state.jobs.map((job) => {
+    const output = { folder: 'output', name: job.output };
+    const buttons = [];
+    if (job.status === 'running') {
+      buttons.push(el('button', { className: 'small', onclick: () => api('POST', '/api/cancel', { id: job.id }).then(pollJobs).catch(showError) }, 'Cancel'));
+    }
+    if (job.status === 'done') {
+      buttons.push(el('button', { className: 'small', onclick: () => selectFile(output) }, 'Play'));
+      buttons.push(el('button', { className: 'small', onclick: () => api('POST', '/api/reveal', output).catch(showError) }, 'Show'));
+    }
+    const statusText = {
+      running: `${job.percent.toFixed(0)}% · ${job.seconds}s`,
+      done: `Done in ${job.seconds}s`,
+      failed: 'Failed',
+      cancelled: 'Cancelled',
+    }[job.status];
+    return el('div', { className: `job ${job.status}` },
+      el('div', { className: 'title' }, el('span', { className: 'name', title: job.output }, job.output), ...buttons),
+      el('div', { className: 'bar' }, el('div', { style: `width:${job.status === 'running' || job.status === 'done' ? job.percent : 100}%` })),
+      el('div', { className: 'muted' }, `${job.label} · ${statusText}`),
+      job.error ? el('div', { className: 'error' }, job.error) : null,
+    );
+  }));
+}
+
+// ---------------------------------------------------------------------------------------
+// Wiring
+// ---------------------------------------------------------------------------------------
+
+video.addEventListener('loadedmetadata', () => { renderTime(); renderTrim(); renderCrop(); });
+video.addEventListener('timeupdate', () => {
+  renderTime();
+  if (state.stopAt != null && video.currentTime >= state.stopAt) {
+    video.pause();
+    state.stopAt = null;
+  }
+});
+video.addEventListener('seeking', renderTime);
+video.addEventListener('pause', () => { if (!video.seeking) state.stopAt = null; });
+new ResizeObserver(() => renderCrop()).observe($('stage'));
+
+$('folderSel').addEventListener('change', onFolderSelect);
+$('browseBtn').onclick = browseFolder;
+// Coming back to the window (e.g. after copying files in Explorer) reloads the list at once.
+window.addEventListener('focus', () => { if (!state.serverDown) refreshFiles().catch(() => {}); });
+
+$('timeline').addEventListener('click', (e) => {
+  const rect = e.currentTarget.getBoundingClientRect();
+  if (duration()) video.currentTime = ((e.clientX - rect.left) / rect.width) * duration();
+});
+$('setStartBtn').onclick = () => setTrim('start', video.currentTime);
+$('setEndBtn').onclick = () => setTrim('end', video.currentTime);
+$('playSelBtn').onclick = playSelection;
+$('clearTrimBtn').onclick = () => { state.trim = { start: null, end: null }; renderTrim(); schedulePlan(); };
+$('stepBackBtn').onclick = () => stepFrame(-1);
+$('stepFwdBtn').onclick = () => stepFrame(1);
+$('startInput').addEventListener('change', () => onTrimInput('start'));
+$('endInput').addEventListener('change', () => onTrimInput('end'));
+
+$('overlay').addEventListener('pointerdown', onCropDown);
+$('overlay').addEventListener('pointermove', onCropMove);
+$('overlay').addEventListener('pointerup', onCropUp);
+$('cropBox').addEventListener('pointerdown', onBoxDown);
+$('cropBox').addEventListener('pointermove', onBoxMove);
+$('cropBox').addEventListener('pointerup', onBoxUp);
+$('cropBox').addEventListener('pointercancel', onBoxUp);
+$('drawCropBtn').onclick = () => { if (state.current && video.videoWidth) setDrawing(!state.drawing); };
+$('clearCropBtn').onclick = () => { state.crop = null; setDrawing(false); renderCrop(); schedulePlan(); };
+$('aspectSel').addEventListener('change', () => {
+  const ratio = aspectRatio();
+  if (ratio && video.videoWidth) {
+    state.crop = centredCrop(ratio);
+    renderCrop();
+    schedulePlan();
+  }
+});
+for (const key of ['X', 'Y', 'W', 'H']) $('crop' + key).addEventListener('change', onCropField);
+
+for (const id of ['muteChk', 'heightSel', 'speedSel', 'preciseChk', 'encoderSel']) {
+  $(id).addEventListener('change', schedulePlan);
+}
+$('exportBtn').onclick = () => state.current && run(editRequest(), $('exportBtn'));
+
+$('stitchMuteChk').addEventListener('change', scheduleStitchPlan);
+$('stitchClearBtn').onclick = () => { state.stitch = []; renderFiles(); renderStitch(); };
+$('stitchBtn').onclick = () => run({ kind: 'stitch', items: state.stitch, mute: $('stitchMuteChk').checked }, $('stitchBtn'));
+
+$('quitBtn').onclick = async () => {
+  const busy = state.jobs.some((j) => j.status === 'running');
+  if (busy && !confirm('A job is still running. Quitting will cancel it. Quit anyway?')) return;
+  await api('POST', '/api/quit').catch(() => {});
+  serverDown();
+  $('banner').textContent = 'Server stopped. You can close this window.';
+  window.close();
+};
+
+document.addEventListener('keydown', (e) => {
+  if (e.target.closest('input, select, textarea') || e.ctrlKey || e.altKey || e.metaKey) return;
+  const key = e.key.toLowerCase();
+  if (key === 'i') setTrim('start', video.currentTime);
+  else if (key === 'o') setTrim('end', video.currentTime);
+  else if (key === 'p') playSelection();
+  else if (key === ',') stepFrame(-1);
+  else if (key === '.') stepFrame(1);
+  else if (key === 'escape' && state.drawing) setDrawing(false);
+  else if (key === ' ' && e.target !== video) {
+    e.preventDefault();
+    if (video.src) video.paused ? video.play() : video.pause();
+  }
+});
+
+refreshFiles().catch(showError);
+pollJobs();
+</script>
+</body>
+</html>
